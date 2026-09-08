@@ -49,7 +49,7 @@ from auto_assets.services import storage
 from auto_assets.ui.asset_tab import ProjectDelegate
 
 TYPE_LABELS = [("any", "any · 任意"), ("loop", "loop · 整体循环×次数")]
-ACTION_LABELS = [("click", "click · 单击")]
+ACTION_LABELS = [("click", "click · 单击"), ("double_click", "double_click · 双击")]
 
 def _strategy_labels(type_: str) -> list[tuple[str, str]]:
     """策略三选：skip 跳过 / loop 重试 / exit 退出。
@@ -156,6 +156,8 @@ class TemplatePicker(QDialog):
 class ProjectEditView(QWidget):
     """项目编辑：自动化项目列表 + 步骤编辑器。"""
 
+    runRequested = Signal(str)  # 项目路径，请求运行
+
     def __init__(self, svc: ProjectService, root: str | None = None):
         super().__init__()
         self._svc = svc
@@ -236,6 +238,11 @@ class ProjectEditView(QWidget):
         self.times_spin.valueChanged.connect(self._on_times_changed)
         form.addWidget(self.times_spin)
         form.addStretch(1)
+        self.btn_run = QPushButton("▶ 运行")
+        self.btn_run.setObjectName("BtnCapture")
+        self.btn_run.setToolTip("隐藏主窗口，打开运行监控；双击任务可停止")
+        self.btn_run.clicked.connect(self._run_project)
+        form.addWidget(self.btn_run)
         ev.addLayout(form)
 
         head = QHBoxLayout()
@@ -468,9 +475,16 @@ class ProjectEditView(QWidget):
         self._reload_list()
         self._status.setText(f"{msg} · 已自动保存")
 
+    # ================= 运行 =================
+
+    def _run_project(self) -> None:
+        if self._handle is None:
+            return
+        self.runRequested.emit(str(self._handle.path))
+
     # ================= 动作 =================
 
-    # ================= 右键菜单：重命名 / 删除 =================
+    # ================= 右键菜单：重命名 / 打开目录 / 删除 =================
 
     def _on_proj_ctx_menu(self, pos) -> None:
         item = self.proj_list.itemAt(pos)

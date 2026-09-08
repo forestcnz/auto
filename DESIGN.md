@@ -296,7 +296,7 @@ mouseRelease → geometry(QScreen 归一化, 处理 DPI scale)
   "type": "any | loop",
   "times": 1000,
   "steps": [
-    {"template": "templates/xx.png", "action": "click", "score": 0.85, "strategy": "skip | loop | exit"}
+    {"template": "templates/xx.png",  "type": "any" 之下的 action 含义见下表| loop | exit"}
   ]
 }
 ```
@@ -311,7 +311,7 @@ mouseRelease → geometry(QScreen 归一化, 处理 DPI scale)
 
 ### 9.2 交互
 
-- 步骤表格：模板（缩略图 + 文件名）/ 动作 / score（双精度微调框）/ 失败策略，所有改动**自动保存**
+- 步骤表格：模板（缩略图 + 文件名）/ 动作（click 单击 / double_click 双击）/ score（双精度微调框）/ 失败策略，所有改动**自动保存**
 - 模板来源：从素材工程缩略图列表选取 → `import_template()` **复制一份**到 `templates/`（重名自动加 `_1`），素材原件不动
 - **重命名 / 删除**：列表项**右键菜单**（未打开也可操作）——与素材管理侧统一为「✎ 重命名 / 📂 打开目录 / ✕ 删除」；重命名同步目录名 + meta.name（非法字符安全化、冲突检测）；删除带确认，若为当前打开项目先清空编辑器
 

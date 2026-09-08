@@ -63,6 +63,10 @@ QTabBar::tab:selected { color: #111827; border-bottom: 2px solid #374151; font-w
 #PlaceholderSub { color: #b8bec7; font-size: 12px; padding-top: 8px; font-family: Consolas, monospace; }
 
 #EditStatus { color: #6b7280; font-family: Consolas, monospace; font-size: 11px; }
+#RunnerWindow { background: #eef0f3; }
+#RunnerHint { color: #8a919c; font-size: 11px; font-family: Consolas, monospace; }
+#TaskList { background: #ffffff; border: 1px solid #d5dae1; border-radius: 3px; }
+#TaskList::item { border-bottom: 1px solid #eef0f3; }
 QTableWidget { background: #ffffff; border: 1px solid #d5dae1; gridline-color: #e9edf2; }
 QHeaderView::section {
   background: #f7f8fa; border: none; border-right: 1px solid #e2e5ea; border-bottom: 1px solid #d5dae1;

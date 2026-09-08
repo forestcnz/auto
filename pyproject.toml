@@ -9,6 +9,7 @@ dependencies = [
     "pyside6>=6.7",
     "mss>=9",
     "pillow>=10",
+    "opencv-python>=5.0.0.93",
 ]
 
 [project.scripts]

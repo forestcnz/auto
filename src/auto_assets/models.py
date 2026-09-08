@@ -40,9 +40,9 @@ class AutoStep(BaseModel):
     """自动化步骤（项目编辑）。"""
 
     template: str  # 相对项目目录：templates/xx.png
-    action: str = "click"  # click 单击
+    action: str = "click"  # click 单击 / double_click 双击
     score: float = 0.85  # 匹配阈值
-    strategy: str = "skip"  # skip 跳过 / exit 退出循环
+    strategy: str = "skip"  # skip 跳过 / loop 循环重试 / exit 终止流程
 
 
 class AutoProject(BaseModel):

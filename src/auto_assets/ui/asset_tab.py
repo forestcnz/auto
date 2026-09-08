@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QListView,
     QMenu,
     QMessageBox,
     QPushButton,
@@ -45,7 +46,6 @@ from auto_assets.services import storage
 from auto_assets.ui.gallery import ShotGallery
 from auto_assets.ui.overlay import CaptureOverlay
 
-DEFAULT_PARENT_DIR = Path("D:/snips")
 SIDEBAR_W = 236
 
 
@@ -55,13 +55,18 @@ ACCENT = "#374151"  # 石墨灰
 class ProjectDelegate(QStyledItemDelegate):
     """工程列表委托：方块选中高亮 + 状态圆点 + mono 计数徽标。
 
-    选中效果明确：实心绿底 + 白字加粗 + 左侧强调条 + 白圈描边圆点。
+    选中效果明确：实心石墨底 + 白字加粗 + 左侧强调条 + 白圈描边圆点。
     """
 
     PAD = 8
 
+    def __init__(self, view):
+        super().__init__(view)
+        self._view = view
+
     def sizeHint(self, option, index) -> QSize:
-        return QSize(option.rect.width(), 36)
+        w = self._view.viewport().width() - self.PAD * 2
+        return QSize(max(120, w), 36)
 
     def paint(self, p: QPainter, option, index) -> None:
         p.save()
@@ -88,15 +93,22 @@ class ProjectDelegate(QStyledItemDelegate):
         p.setBrush(color)
         p.drawEllipse(QPoint(cx, int(cy)), 5, 5)
 
-        # 名称（选中加粗白字）
+        # 名称（选中加粗白字，超长省略）
         f = p.font()
         f.setBold(selected)
         p.setFont(f)
         p.setPen(QColor("#ffffff") if selected else QColor("#1f2937"))
-        p.drawText(
-            rect.adjusted(26, 0, -44, 0),
-            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+        name_rect = rect.adjusted(26, 0, -44, 0)
+        fm = p.fontMetrics()
+        name = fm.elidedText(
             index.data(Qt.ItemDataRole.DisplayRole) or "",
+            Qt.TextElideMode.ElideRight,
+            max(20, name_rect.width()),
+        )
+        p.drawText(
+            name_rect,
+            Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft,
+            name,
         )
 
         # 截图计数（mono 右对齐徽标）
@@ -118,10 +130,10 @@ class ProjectDelegate(QStyledItemDelegate):
 class AssetManagerView(QWidget):
     """素材管理模块视图（auto 顶部第一个 tab）。"""
 
-    def __init__(self):
+    def __init__(self, svc: ProjectService | None = None):
         super().__init__()
 
-        self._svc = ProjectService()
+        self._svc = svc or ProjectService()
         self._project: Project | None = None
         self._overlays: list[CaptureOverlay] = []
         self._capturing = False
@@ -164,17 +176,12 @@ class AssetManagerView(QWidget):
         self.proj_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.proj_list.setItemDelegate(ProjectDelegate(self.proj_list))
         self.proj_list.setMouseTracking(True)
+        self.proj_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.proj_list.setResizeMode(QListView.ResizeMode.Adjust)
         self.proj_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.proj_list.customContextMenuRequested.connect(self._on_proj_ctx_menu)
         self.proj_list.currentRowChanged.connect(self._on_proj_row_changed)
         sv.addWidget(self.proj_list, 1)
-
-        tips = QLabel(
-            "F1 开始框选 · Esc 取消\n点选卡片: F2 重命名 · Del 删除\n右键工程: 重命名 / 删除"
-        )
-        tips.setObjectName("SidebarTips")
-        tips.setContentsMargins(14, 8, 14, 12)
-        sv.addWidget(tips)
 
         root.addWidget(sidebar)
 
@@ -303,21 +310,29 @@ class AssetManagerView(QWidget):
         self._set_project(project)
 
     def _on_proj_ctx_menu(self, pos) -> None:
-        """工程右键菜单：重命名 / 删除。"""
+        """工程右键菜单：重命名 / 打开目录 / 删除（与项目编辑侧一致）。"""
         item = self.proj_list.itemAt(pos)
         if item is None:
             return
         path = Path(item.data(Qt.ItemDataRole.UserRole))
         row = self.proj_list.row(item)
+        path = Path(item.data(Qt.ItemDataRole.UserRole))
+        row = self.proj_list.row(item)
         menu = QMenu(self)
         act_rename = menu.addAction("✎ 重命名工程")
+        act_open = menu.addAction("📂 打开工程目录")
         menu.addSeparator()
         act_del = menu.addAction("✕ 删除工程")
         act = menu.exec(self.proj_list.viewport().mapToGlobal(pos))
         if act == act_rename:
             self._rename_project(row, path)
+        elif act == act_open:
+            self._open_dir_at(path)
         elif act == act_del:
             self._delete_project(path)
+
+    def _open_dir_at(self, path: Path) -> None:
+        QDesktopServices.openUrl(path.as_uri())
 
     def _rename_project(self, row: int, path: Path) -> None:
         old = self.proj_list.item(row).text()
@@ -366,12 +381,8 @@ class AssetManagerView(QWidget):
         name, ok = QInputDialog.getText(self, "新增工程", "工程名称：")
         if not ok or not name.strip():
             return
-        start = DEFAULT_PARENT_DIR if DEFAULT_PARENT_DIR.parent.exists() else Path.home()
-        parent = QFileDialog.getExistingDirectory(self, "选择工程父目录", str(start))
-        if not parent:
-            return
         try:
-            project = self._svc.create_project(name, Path(parent))
+            project = self._svc.create_project(name)
         except FileExistsError as e:
             QMessageBox.warning(self, "创建失败", str(e))
             return
@@ -560,7 +571,7 @@ class AssetManagerView(QWidget):
     def _open_dir(self) -> None:
         if self._project is None:
             return
-        QDesktopServices.openUrl(self._project.path.as_uri())
+        self._open_dir_at(self._project.path)
 
     def shutdown(self) -> None:
         """宿主窗口关闭时调用：释放覆盖层并记录最近工程。"""

@@ -62,6 +62,38 @@ QTabBar::tab:selected { color: #111827; border-bottom: 2px solid #374151; font-w
 #PlaceholderTitle { color: #9aa1ab; font-size: 20px; font-weight: 700; letter-spacing: 4px; }
 #PlaceholderSub { color: #b8bec7; font-size: 12px; padding-top: 8px; font-family: Consolas, monospace; }
 
+#EditStatus { color: #6b7280; font-family: Consolas, monospace; font-size: 11px; }
+QTableWidget { background: #ffffff; border: 1px solid #d5dae1; gridline-color: #e9edf2; }
+QHeaderView::section {
+  background: #f7f8fa; border: none; border-right: 1px solid #e2e5ea; border-bottom: 1px solid #d5dae1;
+  padding: 6px 8px; color: #5f6672; font-weight: 600;
+}
+QTableCornerButton::section { background: #f7f8fa; border: none; }
+QComboBox, QDoubleSpinBox, QSpinBox {
+  background: #ffffff; border: 1px solid #c9ced6; border-radius: 3px; padding: 4px 8px;
+}
+QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus { border-color: #374151; }
+QComboBox::drop-down { border: none; width: 18px; }
+QComboBox QAbstractItemView {
+  background: #ffffff; border: 1px solid #c9ced6;
+  selection-background-color: #374151; selection-color: #ffffff;
+}
+
+/* 微调框上下按钮：显式定义子控件，否则 stylesheet 模式下箭头不可点 */
+QSpinBox::up-button, QDoubleSpinBox::up-button {
+  subcontrol-origin: border; subcontrol-position: top right;
+  width: 18px; border: none; border-left: 1px solid #d5dae1;
+  border-bottom: 1px solid #d5dae1; background: #f0f2f5;
+}
+QSpinBox::down-button, QDoubleSpinBox::down-button {
+  subcontrol-origin: border; subcontrol-position: bottom right;
+  width: 18px; border: none; border-left: 1px solid #d5dae1; background: #f0f2f5;
+}
+QSpinBox::up-button:hover, QDoubleSpinBox::up-button:hover,
+QSpinBox::down-button:hover, QDoubleSpinBox::down-button:hover { background: #dfe3e8; }
+QSpinBox::up-button:pressed, QDoubleSpinBox::up-button:pressed,
+QSpinBox::down-button:pressed, QDoubleSpinBox::down-button:pressed { background: #c9ced6; }
+
 QStatusBar { background: #ffffff; border-top: 1px solid #d5dae1; color: #6b7280;
   font-family: Consolas, monospace; font-size: 11px; }
 QStatusBar::item { border: none; }

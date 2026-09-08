@@ -1,6 +1,6 @@
 # Auto 素材管理
 
-按工程管理的 PC 框选截图工具，作为 **auto** 项目的「素材管理」模块（顶部第一个 tab；第二个 tab「项目编辑」暂为占位）。界面为**工业风浅色主题**：钢灰底色、直角边框、石墨灰（#374151）强调、Consolas 数据字体；启动后不自动打开工程，需在左侧列表点击选择。设计文档见 `DESIGN.md`，UI 设计稿见 `design/ui-mockup.html`（浏览器打开可交互演示）。
+按工程管理的 PC 框选截图工具 + 图步骤自动化项目编辑，作为 **auto** 项目的两个顶部 tab：①「素材管理」②「项目编辑」。界面为**工业风浅色主题**：钢灰底色、直角边框、石墨灰（#374151）强调、Consolas 数据字体；启动后不自动打开工程，需在左侧列表点击选择。设计文档见 `DESIGN.md`，UI 设计稿见 `design/ui-mockup.html`（浏览器打开可交互演示）。
 
 品牌 logo：`src/auto_assets/resources/logo.svg`（自动车 + 激光雷达信号，蓝色主题）。
 
@@ -22,7 +22,9 @@ QT_QPA_PLATFORM=offscreen uv run python -u scripts/smoke_ui.py
 
 ## 使用方法
 
-1. **新增工程**：侧栏「＋ 新增工程」→ 命名 → 选择父目录（默认 `D:/snips/`），自动创建
+### Tab 1 素材管理
+
+1. **新增工程**：侧栏「＋ 新增工程」→ 命名 → 选择父目录（默认 exe 同级 `config/projects/`，可自选），自动创建
    `shots/`、`thumbs/`、`project.json`
    - **重命名 / 删除**：在侧栏**右键工程** → 重命名（改显示名，目录标识不变）/ 删除（确认后整目录删除，不可恢复）
    - 启动后不自动打开工程，点击列表项加载；圆点颜色稳定不漂移
@@ -52,7 +54,25 @@ src/auto_assets/
     └── gallery.py       # 截图墙卡片 + 右键菜单 + 行内重命名
 ```
 
-## 快捷键
+### Tab 2 项目编辑
+
+1. **新建项目**：侧栏「＋ 新建项目」→ 名称 → 类型（any 任意 / loop 循环）→ 循环次数（loop 时）
+2. **添加步骤**：「＋ 添加步骤」→ 从素材工程缩略图列表选一张 → **自动复制**到项目的 `templates/` 目录
+3. **步骤编辑**：动作（click 单击）、阈值 score（默认 0.85）、失败策略（skip 跳过 / exit 退出循环）直接在表格内修改，**改动自动保存**
+4. `project.json` 与用户定义 schema 严格一致：
+
+```json
+{
+  "name": "项目名称",
+  "type": "any",
+  "times": 1000,
+  "steps": [
+    {"template": "templates/xx.png", "action": "click", "score": 0.85, "strategy": "skip"}
+  ]
+}
+```
+
+
 
 | 键 | 作用 |
 |---|---|
@@ -66,5 +86,4 @@ src/auto_assets/
 ## 数据
 
 - 工程即目录：`{工程}/project.json` + `shots/` + `thumbs/`，可直接拷贝分享
-- 未保存（未保存）截图暂存于 `%TEMP%/auto_assets/`
-- 最近工程列表：`%APPDATA%/auto_assets/config.json`
+- 所有应用数据统一在 **exe 同级 `config/`** 下：`config.json`（配置/最近列表）、`tmp/`（未保存截图暂存）、`projects/`（素材工程默认位置）、`auto_projects/`（自动化项目默认位置）

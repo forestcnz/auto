@@ -7,9 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from auto_assets.models import Project, ProjectMeta
+from auto_assets.paths import CONFIG_DIR, DEFAULT_PROJECTS_DIR
 
-CONFIG_DIR = Path.home() / "AppData" / "Roaming" / "auto_assets"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+# 旧版配置位置（%APPDATA%），首次运行时迁移到 exe 同级 config/
+_LEGACY_CONFIG = Path.home() / "AppData" / "Roaming" / "auto_assets" / "config.json"
 
 PROJECT_COLORS = ["#374151", "#6b7280", "#1f2937", "#9ca3af", "#0d9488"]
 
@@ -23,12 +25,14 @@ class RecentEntry:
 @dataclass
 class AppConfig:
     last: str = ""
+    auto_recent: list[str] = field(default_factory=list)  # 历史自动化项目路径（旧版本兼容）
     recent: list[RecentEntry] = field(default_factory=list)
 
     def to_json(self) -> str:
         return json.dumps(
             {
                 "last": self.last,
+                "auto_recent": self.auto_recent,
                 "recent": [{"path": r.path, "color": r.color} for r in self.recent],
             },
             ensure_ascii=False,
@@ -40,6 +44,7 @@ class AppConfig:
         data = json.loads(text)
         return AppConfig(
             last=data.get("last", ""),
+            auto_recent=list(data.get("auto_recent", [])),
             recent=[RecentEntry(**r) for r in data.get("recent", [])],
         )
 
@@ -54,6 +59,9 @@ class ProjectService:
 
     def _load_config(self) -> AppConfig:
         try:
+            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            if not CONFIG_FILE.exists() and _LEGACY_CONFIG.exists():
+                shutil.copy2(_LEGACY_CONFIG, CONFIG_FILE)  # 旧位置迁移
             cfg = AppConfig.from_json(CONFIG_FILE.read_text("utf-8"))
         except Exception:
             return AppConfig()
@@ -90,9 +98,9 @@ class ProjectService:
 
     # ---------- project ----------
 
-    def create_project(self, name: str, parent_dir: Path) -> Project:
-        """新增工程：目录即工程（shots/ + thumbs/ + project.json）。"""
-        parent = Path(parent_dir).expanduser()
+    def create_project(self, name: str, parent_dir: str | None = None) -> Project:
+        """新增工程：目录即工程（shots/ + thumbs/ + project.json），统一在 config/projects/ 下。"""
+        parent = Path(parent_dir).expanduser() if parent_dir else DEFAULT_PROJECTS_DIR
         root = parent / name.strip()
         if root.exists():
             raise FileExistsError(f"目录已存在: {root}")

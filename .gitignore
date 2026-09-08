@@ -13,3 +13,4 @@ dist/
 .vscode/
 Thumbs.db
 .DS_Store
+config/

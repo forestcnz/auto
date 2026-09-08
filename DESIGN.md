@@ -37,8 +37,8 @@
 ```
 Auto 主窗口
 ├── 顶栏：logo + 品牌 + QTabBar
-├── Tab 1「素材管理」 ← 本文档全部内容
-└── Tab 2「项目编辑」 ← 占位页（后续接入）
+├── Tab 1「素材管理」 ← 截图采集（本文档主体）
+└── Tab 2「项目编辑」 ← 图步骤自动化项目（见 §9）
 ```
 
 ---
@@ -122,7 +122,7 @@ auto_assets/
 ### 4.1 工程目录（磁盘即真相）
 
 ```
-D:/snips/manual_v2/            ← 工程根目录
+<exe>/config/projects/manual_v2/  ← 工程根目录（示例，位置可自选）
 ├── project.json               ← 工程元数据
 ├── shots/                     ← 截图文件
 │   ├── 登录页_正常态.png
@@ -167,13 +167,13 @@ class Project(BaseModel):
     shots: list[Shot] = []
 ```
 
-**状态机**：`Shot.saved` 仅两种状态。捕获 → `saved=False`（未保存，文件暂存 `%TEMP%/auto_assets/`）；右键保存 → 移入 `shots/` 并写元数据 → `saved=True`（已保存）。删除未保存态直接丢弃临时文件。
+**状态机**：`Shot.saved` 仅两种状态。捕获 → `saved=False`（未保存，文件暂存 `exe 同级 `config/tmp/``）；右键保存 → 移入 `shots/` 并写元数据 → `saved=True`（已保存）。删除未保存态直接丢弃临时文件。
 
-### 4.4 全局配置 `%APPDATA%/auto_assets/config.toml`
+### 4.4 全局配置 `config/config.json`（exe 同级，开发态为仓库根 config/）
 
 ```toml
 [general]
-last_project = "D:/snips/manual_v2"
+auto_root = "config/auto_projects"
 autosave = false        # true 时捕获即落盘，跳过右键保存
 
 [naming]
@@ -190,7 +190,7 @@ capture = "F1"          # 全局热键（任意界面外框选）
 
 ### 5.1 新增工程
 
-1. 侧栏「＋ 新增工程」→ 模态对话框：工程名、父目录（默认 `D:/snips/`）、命名模板。
+1. 侧栏「＋ 新增工程」→ 模态对话框：工程名、父目录（默认 exe 同级 `config/projects/`，可自选）、命名模板。
 2. 创建：`mkdir -p {dir}/{shots,thumbs}` + 写入 `project.json`。
 3. 成功后自动切换为当前工程；重名/非法路径行内报错。
 4. **重命名工程**：列表项右键 → 更新 `meta.name`（目录名作为稳定标识不变）；最近列表颜色保留。
@@ -259,7 +259,7 @@ mouseRelease → geometry(QScreen 归一化, 处理 DPI scale)
 1. **多显示器 & DPI**：mss 的 monitor 坐标是物理像素；Qt 逻辑坐标需乘 `devicePixelRatio`。覆盖层按 `QScreen.geometry()` 每屏一个实例，跨屏拖选按鼠标当前屏裁剪。
 2. **遮罩不留影**：截图前对覆盖层 `hide()` → `mss.grab()` → `show()`；或使用 `QWidget.grabWindow` 备选。延迟一帧（`QTimer.singleShot(80ms)`）确保合成器刷新。
 3. **性能**：编码与缩略图在 `QThreadPool`；画廊模型仅在编码完成后接收信号刷新。
-4. **崩溃安全**：未保存的临时文件在启动时扫描 `%TEMP%/auto_assets/`，提供"恢复上次会话"。
+4. **崩溃安全**：未保存的临时文件在启动时扫描 `exe 同级 `config/tmp/``，提供"恢复上次会话"。
 5. **i18n**：界面文案统一走 `tr()`，先出中文。
 
 ---
@@ -277,6 +277,51 @@ mouseRelease → geometry(QScreen 归一化, 处理 DPI scale)
 ---
 
 ## 8. 非目标（v1 不做）
+
+- 标注/马赛克/箭头编辑（留给 v2 的编辑器面板）
+- 录屏、滚动长截图
+- 云同步（工程目录即数据，用户可自行网盘同步）
+
+---
+
+## 9. 项目编辑模块（Tab 2）
+
+图步骤自动化项目编辑器。目录即项目：`{auto_root}/{项目名}/project.json + templates/`（auto_root 默认 exe 同级 `config/auto_projects/`，创建时可自选并记忆；`auto_recent` 记录根目录外的历史项目）。
+
+### 9.1 数据 schema（用户定义，pydantic 校验）
+
+```json
+{
+  "name": "项目名称",
+  "type": "any | loop",
+  "times": 1000,
+  "steps": [
+    {"template": "templates/xx.png", "action": "click", "score": 0.85, "strategy": "skip | loop | exit"}
+  ]
+}
+```
+
+失败策略三选（策略里的 `loop` 与项目类型 `loop` 是两个概念——前者是步骤级循环重试，后者是整体流程循环次数）：
+
+| 值 | loop 项目 | any 项目 |
+|---|---|---|
+| `skip` | 跳过本步，继续执行后续步骤 | 同左 |
+| `loop` | 循环重试本步，直到匹配成功 | 同左 |
+| `exit` | 退出循环 | 终止流程 |
+
+### 9.2 交互
+
+- 步骤表格：模板（缩略图 + 文件名）/ 动作 / score（双精度微调框）/ 失败策略，所有改动**自动保存**
+- 模板来源：从素材工程缩略图列表选取 → `import_template()` **复制一份**到 `templates/`（重名自动加 `_1`），素材原件不动
+- **重命名 / 删除**：列表项**右键菜单**（未打开也可操作）——与素材管理侧统一为「✎ 重命名 / 📂 打开目录 / ✕ 删除」；重命名同步目录名 + meta.name（非法字符安全化、冲突检测）；删除带确认，若为当前打开项目先清空编辑器
+
+### 9.3 关键类
+
+- `models.AutoStep / AutoProject`：schema 模型
+- `services/automation.py AutomationService`：CRUD + 模板复制
+- `ui/edit_tab.py ProjectEditView / TemplatePicker`：编辑器与选取对话框
+
+---
 
 - 标注/马赛克/箭头编辑（留给 v2 的编辑器面板）
 - 录屏、滚动长截图

@@ -55,4 +55,11 @@ print("7. reload ->", p2.name, len(p2.meta.shots), p2.meta.shots[0].name)
 
 # 配置
 print("8. config recent ->", [r.path for r in svc.config.recent])
+
+# 清理：移除指向临时目录的污染条目（不影响真实工程）
+import tempfile as _tf
+_tmp_root = str(Path(_tf.gettempdir()))
+svc.config.recent = [r for r in svc.config.recent if not r.path.startswith(_tmp_root)]
+svc.save_config()
+print("cleaned, recent ->", [r.path for r in svc.config.recent])
 print("ALL OK")

@@ -36,6 +36,24 @@ class ProjectMeta(BaseModel):
     shots: list[Shot] = Field(default_factory=list)
 
 
+class AutoStep(BaseModel):
+    """自动化步骤（项目编辑）。"""
+
+    template: str  # 相对项目目录：templates/xx.png
+    action: str = "click"  # click 单击
+    score: float = 0.85  # 匹配阈值
+    strategy: str = "skip"  # skip 跳过 / exit 退出循环
+
+
+class AutoProject(BaseModel):
+    """自动化项目 project.json（用户定义 schema）。"""
+
+    name: str
+    type: str = "any"  # any 任意 / loop 循环
+    times: int = 1000  # type=loop 时生效
+    steps: list[AutoStep] = Field(default_factory=list)
+
+
 class Project:
     """运行时工程对象：磁盘路径 + 元数据。"""
 

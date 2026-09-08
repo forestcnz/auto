@@ -1,9 +1,8 @@
-"""存储服务：暂存暂存 / 保存已保存 / 重命名 / 删除 / 缩略图 / 导出。"""
+"""存储服务：暂存 / 已保存管理 / 重命名 / 删除 / 缩略图 / 导出。"""
 from __future__ import annotations
 
 import re
 import shutil
-import tempfile
 import zipfile
 from pathlib import Path
 
@@ -11,19 +10,15 @@ from PIL import Image
 from PySide6.QtGui import QPixmap
 
 from auto_assets.models import Project, Shot
+from auto_assets.paths import TMP_DIR
 
 THUMB_W = 320
 
-_name_cache: Path | None = None
-
 
 def temp_dir() -> Path:
-    """未保存截图的暂存目录 %TEMP%/auto_assets/。"""
-    global _name_cache
-    if _name_cache is None:
-        _name_cache = Path(tempfile.gettempdir()) / "auto_assets"
-        _name_cache.mkdir(parents=True, exist_ok=True)
-    return _name_cache
+    """未保存截图的暂存目录（exe 同级 config/tmp/）。"""
+    TMP_DIR.mkdir(parents=True, exist_ok=True)
+    return TMP_DIR
 
 
 def sanitize(name: str) -> str:

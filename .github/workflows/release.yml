@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Read version
+        id: ver
+        shell: bash
+        run: |
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -1)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Run smoke tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          uv run python -u scripts/smoke_test.py
+          uv run python -u scripts/smoke_ui.py
+
+      - name: Build executable
+        run: >
+          uv run pyinstaller --noconfirm --clean --onefile --windowed
+          --icon src/auto_assets/resources/logo.ico
+          --name "AutoAssets-${{ steps.ver.outputs.version }}"
+          launcher.py
+
+      - name: Package zip
+        shell: pwsh
+        run: >
+          Compress-Archive -Path "dist/AutoAssets-${{ steps.ver.outputs.version }}.exe"
+          -DestinationPath "dist/AutoAssets-${{ steps.ver.outputs.version }}-windows-x64.zip"
+          -Force
+
+      - name: Remove old release with same version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete "v${{ steps.ver.outputs.version }}" --yes --cleanup-tag
+        continue-on-error: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.ver.outputs.version }}"
+          name: "Auto · 素材管理 v${{ steps.ver.outputs.version }}"
+          body: |
+            自动构建于 master @ ${{ github.sha }}
+
+            ## 安装
+            下载 `AutoAssets-${{ steps.ver.outputs.version }}-windows-x64.zip`，解压后运行 `AutoAssets-*.exe`（免安装）。
+          files: dist/AutoAssets-*-windows-x64.zip
+          generate_release_notes: true

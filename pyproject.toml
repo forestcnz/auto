@@ -1,0 +1,30 @@
+[project]
+name = "auto_assets"
+version = "0.1.0"
+description = "Auto · 素材管理 — 按工程管理的 PC 框选截图工具"
+readme = "DESIGN.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.7",
+    "pyside6>=6.7",
+    "mss>=9",
+    "pillow>=10",
+]
+
+[project.scripts]
+auto_assets = "auto_assets.app:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/auto_assets"]
+
+[tool.uv]
+package = true
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.22.2",
+]

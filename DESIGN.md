@@ -96,7 +96,6 @@ dependencies = ["pyside6>=6.7", "mss>=9", "pillow>=10", "pydantic-settings>=2"]
 auto_assets/
 ├── pyproject.toml
 ├── DESIGN.md
-├── design/ui-mockup.html
 └── src/auto_assets/
     ├── __main__.py          # 入口
     ├── app.py               # QApplication 装配、全局热键

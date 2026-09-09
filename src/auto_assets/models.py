@@ -52,6 +52,7 @@ class AutoProject(BaseModel):
     type: str = "any"  # any 任意 / loop 循环
     times: int = 1000  # type=loop 时生效
     steps: list[AutoStep] = Field(default_factory=list)
+    script: str = ""  # Python 脚本相对路径（scripts/main.py）；空 = 纯步骤模式
 
 
 class Project:

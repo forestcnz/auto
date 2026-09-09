@@ -1,6 +1,6 @@
 [project]
 name = "auto_assets"
-version = "0.1.0"
+version = "0.2.0"
 description = "Auto · 素材管理 — 按工程管理的 PC 框选截图工具"
 readme = "DESIGN.md"
 requires-python = ">=3.11"

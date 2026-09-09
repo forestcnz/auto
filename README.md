@@ -58,8 +58,11 @@ src/auto_assets/
 
 1. **新建项目**：侧栏「＋ 新建项目」→ 名称 → 类型（any 任意 / loop 循环）→ 循环次数（loop 时）
 2. **添加步骤**：「＋ 添加步骤」→ 从素材工程缩略图列表选一张 → **自动复制**到项目的 `templates/` 目录
-3. **步骤编辑**：动作（click 单击）、阈值 score（默认 0.85）、失败策略（skip 跳过 / exit 退出循环）直接在表格内修改，**改动自动保存**
-4. `project.json` 与用户定义 schema 严格一致：
+3. **步骤编辑**：动作（click 单击 / double_click 双击）、阈值 score（默认 0.85）、失败策略（skip 跳过 / loop 循环重试 / exit 退出）直接在表格内修改，**改动自动保存**；末列 `↑` `↓` `✕` 排序/删除，行右键菜单支持 放大预览 / 替换模板 / 复制步骤，点击模板列放大查看原图
+4. **运行**：「▶ 运行」隐藏主窗口打开运行监控小窗：loop 项目显示轮次进度条与实时耗时，每个任务可「■ 停止」（或双击任务行），也可「■ 全部停止」
+5. **脚本模式**：表单「脚本」行选择 `scripts/xx.py`（「＋ 新建」自动生成骨架）→ 运行时忽略步骤列表，每轮调用一次脚本里的 `main(auto)`；「✎ 编辑」打开内嵌编辑器（语法高亮 / `Ctrl+S` 保存 / `▶ 试运行` 真实执行一轮）
+   - 脚本 `auto` API：`find(name, score)` / `find_click(...)` / `wait(name, timeout)` 找图；`click` / `double_click` / `key` / `hotkey("ctrl","s")` / `text("中文")` 输入；`sleep` / `log` / `pixel` 取色 / `screen_size` / `round` 轮次 / `abort("原因")` 主动终止
+6. `project.json` 与用户定义 schema 严格一致：
 
 ```json
 {
@@ -68,7 +71,8 @@ src/auto_assets/
   "times": 1000,
   "steps": [
     {"template": "templates/xx.png", "action": "click", "score": 0.85, "strategy": "skip"}
-  ]
+  ],
+  "script": ""
 }
 ```
 

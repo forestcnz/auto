@@ -67,6 +67,11 @@ QTabBar::tab:selected { color: #111827; border-bottom: 2px solid #374151; font-w
 #RunnerHint { color: #8a919c; font-size: 11px; font-family: Consolas, monospace; }
 #TaskList { background: #ffffff; border: 1px solid #d5dae1; border-radius: 3px; }
 #TaskList::item { border-bottom: 1px solid #eef0f3; }
+#TaskProgress {
+  background: #ffffff; border: 1px solid #d5dae1; border-radius: 2px;
+  text-align: center; color: #6b7280; font-size: 10px; font-family: Consolas, monospace;
+}
+#TaskProgress::chunk { background: #374151; }
 QTableWidget { background: #ffffff; border: 1px solid #d5dae1; gridline-color: #e9edf2; }
 QHeaderView::section {
   background: #f7f8fa; border: none; border-right: 1px solid #e2e5ea; border-bottom: 1px solid #d5dae1;

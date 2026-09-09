@@ -294,8 +294,9 @@ mouseRelease → geometry(QScreen 归一化, 处理 DPI scale)
   "type": "any | loop",
   "times": 1000,
   "steps": [
-    {"template": "templates/xx.png",  "type": "any" 之下的 action 含义见下表| loop | exit"}
-  ]
+    {"template": "templates/xx.png", "action": "click | double_click", "score": 0.85, "strategy": "skip | loop | exit"}
+  ],
+  "script": ""
 }
 ```
 
@@ -310,14 +311,35 @@ mouseRelease → geometry(QScreen 归一化, 处理 DPI scale)
 ### 9.2 交互
 
 - 步骤表格：模板（缩略图 + 文件名）/ 动作（click 单击 / double_click 双击）/ score（双精度微调框）/ 失败策略，所有改动**自动保存**
+- 步骤操作：末列 `↑` `↓` `✕` 按钮排序/删除；行右键菜单（放大预览 / 替换模板 / 复制步骤 / 上移 / 下移 / 删除）；点击模板列弹出原始尺寸自适应预览。替换模板重新走 `TemplatePicker` → `import_template()`（旧文件保留，多步骤可共享同一模板文件）；复制/排序仅调整 `steps` 数组并自动保存
 - 模板来源：从素材工程缩略图列表选取 → `import_template()` **复制一份**到 `templates/`（重名自动加 `_1`），素材原件不动
 - **重命名 / 删除**：列表项**右键菜单**（未打开也可操作）——与素材管理侧统一为「✎ 重命名 / 📂 打开目录 / ✕ 删除」；重命名同步目录名 + meta.name（非法字符安全化、冲突检测）；删除带确认，若为当前打开项目先清空编辑器
+- 运行监控小窗（`RunnerWindow`）：loop 项目显示轮次进度条（`TaskWorker.round_current/round_total`，1s QTimer 轮询刷新），状态行附实时耗时；每个任务「■ 停止」按钮 + 底部「■ 全部停止」，双击任务行停止保留
+
+### 9.4 Python 脚本模式（v0.2 新增）
+
+`project.json` 的 `script` 字段非空（如 `scripts/main.py`）时为**脚本模式**：运行时忽略 `steps`，`type/times` 语义不变（any 执行一次 / loop 外层循环，进度条照常工作），每轮调用一次脚本入口 `main(auto)`；顶层代码只执行一次（适合 import / 常量），本轮提前结束用 `return`，主动终止用 `auto.abort("原因")`（状态「已完成」，区别于异常导致的「出错」）。
+
+`auto` 桥接对象（`services/scripting.py ScriptAPI`，模板按 `templates/` 下文件名引用，坐标均为绝对物理像素）：
+
+| 分类 | API |
+|---|---|
+| 找图 | `find(name, score=0.85) → (score, cx, cy) \| None`、`find_click(name, score, double)`、`wait(name, timeout=10, score)` |
+| 输入 | `click(x, y)`、`double_click(x, y)`、`key("enter")`、`hotkey("ctrl", "s")`（keybd_event）、`text("中文")`（SendInput UNICODE，绕过输入法） |
+| 流程 | `sleep(s)`（分片可中断）、`log(msg)`（写入监控窗）、`round`、`stop_requested()`、`abort(reason)` |
+| 屏幕 | `screen_size()`、`pixel(x, y) → (r, g, b)` |
+
+- 脚本文件管理：`AutomationService` CRUD（重名 `_1`、防路径穿越、空目录清理）；UI 表单「脚本」行：下拉（无 / 脚本列表）+ 新建（写入骨架）/ 编辑 / 删除，切换即自动保存
+- 编辑器（`ui/edit_tab.py ScriptEditorDialog`）：QPlainTextEdit + 极简 QSyntaxHighlighter（关键字/字符串/注释）+ `Ctrl+S` 保存 + 关闭未保存提示 + `▶ 试运行`（确认后保存并真实执行一轮，非阻塞 TaskWorker，可停止）
+- 安全说明：脚本与主程序同信任级（本机个人工具），不做硬沙箱；`grab_fn/click_fn/key_fn/hotkey_fn/text_fn` 全部可注入，离屏冒烟（`scripts/smoke_script.py`）不碰真实鼠标键盘
 
 ### 9.3 关键类
 
 - `models.AutoStep / AutoProject`：schema 模型
 - `services/automation.py AutomationService`：CRUD + 模板复制
+- `services/runner.py TaskWorker`：QThread 执行线程，暴露 `round_current / round_total / started_at / finished_at` 供监控窗口轮询
 - `ui/edit_tab.py ProjectEditView / TemplatePicker`：编辑器与选取对话框
+- `ui/runner_window.py RunnerWindow / TaskRow`：运行监控窗口与任务行（进度条 + 停止按钮）
 
 ---
 

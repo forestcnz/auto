@@ -15,10 +15,19 @@
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import QRegularExpression, QSize, Qt, Signal
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QKeySequence,
+    QPixmap,
+    QShortcut,
+    QTextCharFormat,
+    QSyntaxHighlighter,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -34,6 +43,7 @@ from PySide6.QtWidgets import (
     QListView,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTableWidget,
@@ -45,6 +55,7 @@ from PySide6.QtWidgets import (
 from auto_assets.models import AutoProject, AutoStep, Shot
 from auto_assets.services.automation import AutomationService, AutoProjectHandle
 from auto_assets.services.project import ProjectService
+from auto_assets.services.runner import TaskWorker
 from auto_assets.services import storage
 from auto_assets.ui.asset_tab import ProjectDelegate
 
@@ -77,6 +88,150 @@ def _combo(labels: list[tuple[str, str]], value: str) -> QComboBox:
     idx = combo.findData(value)
     combo.setCurrentIndex(max(0, idx))
     return combo
+
+
+class _PyHighlighter(QSyntaxHighlighter):
+    """极简 Python 语法高亮：关键字 / 字符串 / 注释（无第三方依赖，多行字符串不处理）。"""
+
+    def __init__(self, doc):
+        super().__init__(doc)
+        kw = ("and|as|assert|async|await|break|class|continue|def|del|elif|else|except|"
+              "finally|for|from|global|if|import|in|is|lambda|None|nonlocal|not|or|pass|"
+              "raise|return|True|False|try|while|with|yield")
+        fmt_kw = QTextCharFormat()
+        fmt_kw.setForeground(QColor("#374151"))
+        fmt_kw.setFontWeight(QFont.Weight.Bold)
+        fmt_str = QTextCharFormat()
+        fmt_str.setForeground(QColor("#0d9488"))
+        fmt_cmt = QTextCharFormat()
+        fmt_cmt.setForeground(QColor("#9aa1ab"))
+        fmt_cmt.setFontItalic(True)
+        # 顺序应用：字符串覆盖关键字、注释最后覆盖（简单近似）
+        self._rules = [
+            (QRegularExpression(rf"\b(?:{kw})\b"), fmt_kw),
+            (QRegularExpression(r"'[^'\n]*'|\"[^\"\n]*\""), fmt_str),
+            (QRegularExpression(r"#[^\n]*"), fmt_cmt),
+        ]
+
+    def highlightBlock(self, text: str) -> None:
+        for rx, fmt in self._rules:
+            it = rx.globalMatch(text)
+            while it.hasNext():
+                m = it.next()
+                self.setFormat(m.capturedStart(), m.capturedLength(), fmt)
+
+
+class ScriptEditorDialog(QDialog):
+    """Python 脚本编辑器：语法高亮 + Ctrl+S 保存 + 非阻塞试运行（真实执行一轮）。"""
+
+    def __init__(self, auto_svc: AutomationService, auto_dir: Path, rel: str, parent=None):
+        super().__init__(parent)
+        self._auto = auto_svc
+        self._dir = Path(auto_dir)
+        self._rel = rel
+        self._worker: TaskWorker | None = None
+        self.setWindowTitle(f"编辑脚本 · {rel}")
+        self.resize(760, 560)
+
+        lay = QVBoxLayout(self)
+        self.edit = QPlainTextEdit()
+        self.edit.setFont(QFont("Consolas", 10))
+        self.edit.setPlainText(self._auto.read_script(self._dir, self._rel))
+        self._saved_text = self.edit.toPlainText()  # 关闭时判断未保存改动
+        self._hl = _PyHighlighter(self.edit.document())
+        lay.addWidget(self.edit, 1)
+
+        self._status = QLabel("")
+        self._status.setObjectName("EditStatus")
+        self._status.setWordWrap(True)
+        lay.addWidget(self._status)
+
+        btns = QHBoxLayout()
+        self.btn_run = QPushButton("▶ 试运行")
+        self.btn_run.setObjectName("BtnCapture")
+        self.btn_run.setToolTip("先保存，然后真实执行一轮：将截屏，且可能点击鼠标 / 输入按键")
+        self.btn_run.clicked.connect(self._dry_run)
+        btns.addWidget(self.btn_run)
+        btns.addStretch(1)
+        btn_save = QPushButton("保存")
+        btn_save.setObjectName("ToolBtn")
+        btn_save.clicked.connect(self._save)
+        btns.addWidget(btn_save)
+        btn_close = QPushButton("关闭")
+        btn_close.setObjectName("ToolBtn")
+        btn_close.clicked.connect(self.close)
+        btns.addWidget(btn_close)
+        lay.addLayout(btns)
+
+        QShortcut(QKeySequence.StandardKey.Save, self, self._save)
+
+    # ---- 保存 ----
+
+    def _save(self) -> bool:
+        try:
+            self._auto.save_script(self._dir, self._rel, self.edit.toPlainText())
+        except OSError as e:
+            QMessageBox.warning(self, "保存失败", str(e))
+            return False
+        self._saved_text = self.edit.toPlainText()
+        self._status.setText(f"已保存 {self._rel} · {time.strftime('%H:%M:%S')}")
+        return True
+
+    # ---- 试运行 ----
+
+    def _dry_run(self) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            QMessageBox.information(self, "提示", "试运行进行中，请稍候")
+            return
+        ret = QMessageBox.warning(
+            self, "试运行",
+            "将真实截屏，且可能点击鼠标 / 输入按键。\n\n确定执行一轮？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        if not self._save():  # 先落盘，运行引擎从磁盘读脚本
+            return
+        data = AutoProject(name="试运行", type="any", times=1, script=self._rel)
+        self._worker = TaskWorker(self._dir, data)
+        self._worker.updated.connect(self._on_run_update)
+        self._worker.finished.connect(self._on_run_done)
+        self._worker.start()
+        self.btn_run.setEnabled(False)
+        self._status.setText("试运行中…")
+
+    def _on_run_update(self) -> None:
+        if self._worker is not None:
+            self._status.setText(f"[{self._worker.status}] {self._worker.detail}")
+
+    def _on_run_done(self) -> None:
+        if self._worker is not None:
+            self._status.setText(f"试运行结束 · [{self._worker.status}] {self._worker.detail}")
+        self.btn_run.setEnabled(True)
+
+    # ---- 关闭 ----
+
+    def closeEvent(self, e) -> None:
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.stop()
+            self._worker.wait(3000)
+        if self.edit.toPlainText() != self._saved_text:
+            ret = QMessageBox.question(
+                self, "未保存", "脚本已修改但未保存，保存并关闭？",
+                QMessageBox.StandardButton.Save
+                | QMessageBox.StandardButton.Discard
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if ret == QMessageBox.StandardButton.Save:
+                if not self._save():
+                    e.ignore()
+                    return
+            elif ret != QMessageBox.StandardButton.Discard:
+                e.ignore()
+                return
+        super().closeEvent(e)
 
 
 class TemplatePicker(QDialog):
@@ -245,6 +400,33 @@ class ProjectEditView(QWidget):
         form.addWidget(self.btn_run)
         ev.addLayout(form)
 
+        # ---- 脚本行：选择 Python 脚本后为脚本模式（运行时忽略步骤） ----
+        srow = QHBoxLayout()
+        srow.setSpacing(8)
+        srow.addWidget(QLabel("脚本:"))
+        self.script_combo = QComboBox()
+        self.script_combo.setToolTip(
+            "选择 Python 脚本（scripts/xx.py）后为脚本模式：运行时忽略下方步骤列表"
+        )
+        self.script_combo.currentIndexChanged.connect(self._on_script_changed)
+        srow.addWidget(self.script_combo, 1)
+        self.btn_edit_script = QPushButton("✎ 编辑")
+        self.btn_edit_script.setObjectName("ToolBtn")
+        self.btn_edit_script.setToolTip("打开脚本编辑器（语法高亮 / Ctrl+S 保存 / 试运行）")
+        self.btn_edit_script.clicked.connect(self._edit_script)
+        srow.addWidget(self.btn_edit_script)
+        self.btn_new_script = QPushButton("＋ 新建")
+        self.btn_new_script.setObjectName("ToolBtn")
+        self.btn_new_script.setToolTip("新建脚本并启用脚本模式")
+        self.btn_new_script.clicked.connect(self._new_script)
+        srow.addWidget(self.btn_new_script)
+        self.btn_del_script = QPushButton("✕ 删除")
+        self.btn_del_script.setObjectName("ToolBtn")
+        self.btn_del_script.setToolTip("删除选中的脚本文件")
+        self.btn_del_script.clicked.connect(self._delete_script)
+        srow.addWidget(self.btn_del_script)
+        ev.addLayout(srow)
+
         head = QHBoxLayout()
         title = QLabel("步骤 Steps")
         title.setObjectName("SidebarCap")
@@ -266,9 +448,14 @@ class ProjectEditView(QWidget):
         self.table.setColumnWidth(2, 130)
         self.table.setColumnWidth(3, 120)
         self.table.setColumnWidth(4, 150)
-        self.table.setColumnWidth(5, 44)
+        self.table.setColumnWidth(5, 110)
         self.table.horizontalHeader().setStretchLastSection(False)
         self.table.setStyleSheet("QTableWidget::item{padding:4px;}")
+        # 行右键菜单（放大预览 / 替换模板 / 复制 / 上移 / 下移 / 删除）
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._on_step_ctx_menu)
+        # 点击模板列放大预览
+        self.table.cellClicked.connect(self._on_cell_clicked)
         ev.addWidget(self.table, 1)
 
         self.empty_lbl = QLabel("未选择项目\n\n点击左侧「＋ 新建项目」开始")
@@ -284,6 +471,7 @@ class ProjectEditView(QWidget):
         self._editor_widgets = [
             self.name_edit, self.type_combo, self.times_spin,
             self.btn_add_step, self.table,
+            self.script_combo, self.btn_edit_script, self.btn_new_script, self.btn_del_script,
         ]
 
     # ================= 项目切换 =================
@@ -341,9 +529,91 @@ class ProjectEditView(QWidget):
         self.type_combo.setCurrentIndex(max(0, self.type_combo.findData(d.type)))
         self.times_spin.setValue(max(1, d.times))
         self.times_spin.setEnabled(d.type == "loop")
+        self._reload_scripts()
         self._rebuild_table()
         self._loading = False
-        self._status.setText(f"已打开 {handle.path}")
+        script_hint = f" · 脚本模式 {d.script}" if d.script else ""
+        self._status.setText(f"已打开 {handle.path}{script_hint}")
+
+    # ================= 脚本 =================
+
+    def _reload_scripts(self) -> None:
+        """刷新脚本下拉（首项 = 无脚本/步骤模式），并同步当前选择。"""
+        self.script_combo.blockSignals(True)
+        self.script_combo.clear()
+        self.script_combo.addItem("（无 · 步骤模式）", "")
+        if self._handle is not None:
+            for rel in self._auto.list_scripts(self._handle.path):
+                self.script_combo.addItem(rel, rel)
+            idx = self.script_combo.findData(self._handle.data.script or "")
+            self.script_combo.setCurrentIndex(max(0, idx))
+        self.script_combo.blockSignals(False)
+        self._update_script_buttons()
+
+    def _update_script_buttons(self) -> None:
+        has_file = bool(self.script_combo.currentData())
+        self.btn_edit_script.setEnabled(has_file)
+        self.btn_del_script.setEnabled(has_file)
+        self.btn_new_script.setEnabled(self._handle is not None)
+
+    def _on_script_changed(self) -> None:
+        self._update_script_buttons()
+        if self._loading or self._handle is None:
+            return
+        val = self.script_combo.currentData() or ""
+        if val == (self._handle.data.script or ""):
+            return
+        self._handle.data.script = val
+        self._save_and_refresh("已切换为脚本模式" if val else "已切换为步骤模式")
+
+    def _new_script(self) -> None:
+        if self._handle is None:
+            return
+        name, ok = QInputDialog.getText(self, "新建脚本", "脚本名称（不含 .py）：")
+        if not ok or not name.strip():
+            return
+        try:
+            rel = self._auto.create_script(self._handle.path, name)
+        except OSError as e:
+            QMessageBox.warning(self, "创建失败", str(e))
+            return
+        self._handle.data.script = rel  # 新建即启用脚本模式
+        self._save_and_refresh(f"已新建脚本 {rel} · 已自动保存")
+        self._reload_scripts()
+        self._edit_script()
+
+    def _edit_script(self) -> None:
+        if self._handle is None:
+            return
+        rel = self.script_combo.currentData() or ""
+        if not rel:
+            return
+        dlg = ScriptEditorDialog(self._auto, self._handle.path, rel, self)
+        dlg.exec()
+
+    def _delete_script(self) -> None:
+        if self._handle is None:
+            return
+        rel = self.script_combo.currentData() or ""
+        if not rel:
+            return
+        ret = QMessageBox.warning(
+            self, "删除脚本", f"确定删除脚本？\n\n{rel}\n\n删除后不可恢复！",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if ret != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            self._auto.delete_script(self._handle.path, rel)
+        except (OSError, ValueError) as e:
+            QMessageBox.warning(self, "删除失败", str(e))
+            return
+        if self._handle.data.script == rel:
+            self._handle.data.script = ""
+            self._save_and_refresh("脚本已删除 · 已自动保存")
+        self._reload_scripts()
+        self._status.setText(f"已删除脚本 {rel}")
 
     # ================= 表格 =================
 
@@ -362,7 +632,7 @@ class ProjectEditView(QWidget):
         idx.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, 0, idx)
 
-        # 模板：缩略图 + 文件名
+        # 模板：缩略图 + 文件名（点击放大预览，右键更多操作）
         tpl_path = self._handle.path / step.template if step.template else None
         pm = QPixmap(str(tpl_path)) if tpl_path and tpl_path.exists() else QPixmap()
         item = QTableWidgetItem(Path(step.template).name if step.template else "(未设置)")
@@ -373,6 +643,7 @@ class ProjectEditView(QWidget):
                 Qt.TransformationMode.SmoothTransformation,
             ))
         item.setData(Qt.ItemDataRole.UserRole, step.template)
+        item.setToolTip(f"{step.template}\n点击放大预览 · 右键更多操作")
         self.table.setItem(row, 1, item)
 
         act = _combo(ACTION_LABELS, step.action)
@@ -394,10 +665,24 @@ class ProjectEditView(QWidget):
         strat.currentIndexChanged.connect(lambda _i, r=row: self._on_strategy_changed(r))
         self.table.setCellWidget(row, 4, strat)
 
+        # 末列操作组：↑ 上移 / ↓ 下移 / ✕ 删除
+        ops = QWidget()
+        ops_lay = QHBoxLayout(ops)
+        ops_lay.setContentsMargins(0, 0, 0, 0)
+        ops_lay.setSpacing(2)
+        btn_up = QPushButton("↑")
+        btn_up.setToolTip("上移此步骤")
+        btn_up.clicked.connect(lambda _c=False, r=row: self._move_step(r, -1))
+        btn_down = QPushButton("↓")
+        btn_down.setToolTip("下移此步骤")
+        btn_down.clicked.connect(lambda _c=False, r=row: self._move_step(r, 1))
         btn_del = QPushButton("✕")
         btn_del.setToolTip("删除此步骤")
         btn_del.clicked.connect(lambda _c=False, r=row: self._remove_step(r))
-        self.table.setCellWidget(row, 5, btn_del)
+        for b in (btn_up, btn_down, btn_del):
+            b.setFixedWidth(30)
+            ops_lay.addWidget(b)
+        self.table.setCellWidget(row, 5, ops)
         self.table.setRowHeight(row, 60)
 
     def _steps_mutated(self, msg: str) -> None:
@@ -433,6 +718,106 @@ class ProjectEditView(QWidget):
         del self._handle.data.steps[row]
         self._rebuild_table()
         self._steps_mutated("步骤已删除")
+
+    # ================= 步骤操作：排序 / 复制 / 替换模板 / 放大预览 =================
+
+    def _move_step(self, row: int, delta: int) -> None:
+        """上移（delta=-1）/ 下移（delta=+1）步骤，越界为静默 no-op。"""
+        if self._handle is None or self._loading:
+            return
+        steps = self._handle.data.steps
+        new_row = row + delta
+        if row < 0 or row >= len(steps) or new_row < 0 or new_row >= len(steps):
+            return
+        steps[row], steps[new_row] = steps[new_row], steps[row]
+        self._rebuild_table()
+        self._steps_mutated(f"步骤已{'上移' if delta < 0 else '下移'}")
+
+    def _copy_step(self, row: int) -> None:
+        """复制步骤：在原步骤后插入副本（template 文件共享，不重复拷贝）。"""
+        if self._handle is None or row < 0 or row >= len(self._handle.data.steps):
+            return
+        src = self._handle.data.steps[row]
+        self._handle.data.steps.insert(row + 1, src.model_copy(deep=True))
+        self._rebuild_table()
+        self._steps_mutated(f"已复制步骤 {row + 1}")
+
+    def _replace_template(self, row: int) -> None:
+        """替换模板：重新选图复制进 templates/（重名自动加 _1），旧文件保留（可能被其他步骤引用）。"""
+        if self._handle is None or row < 0 or row >= len(self._handle.data.steps):
+            return
+        dlg = TemplatePicker(self._svc, self)
+        if dlg.exec() != QDialog.DialogCode.Accepted or dlg.result_source is None:
+            return
+        if not dlg.result_source.exists():
+            QMessageBox.warning(self, "模板不可用", "源截图文件不存在（可能是未保存的素材）")
+            return
+        rel = self._auto.import_template(self._handle.path, dlg.result_source)
+        self._handle.data.steps[row].template = rel
+        self._rebuild_table()
+        self._steps_mutated(f"步骤 {row + 1} 已替换模板（复制自 {dlg.result_source.name}）")
+
+    def _preview_template(self, row: int) -> None:
+        """放大预览模板：原始尺寸自适应大图 + 文件信息。"""
+        if self._handle is None or row < 0 or row >= len(self._handle.data.steps):
+            return
+        rel = self._handle.data.steps[row].template
+        path = self._handle.path / rel if rel else None
+        if not path or not path.exists():
+            QMessageBox.warning(self, "预览失败", f"模板文件不存在：\n{rel}")
+            return
+        pm = QPixmap(str(path))
+        if pm.isNull():
+            QMessageBox.warning(self, "预览失败", f"无法读取模板图像：\n{rel}")
+            return
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"模板预览 · {Path(rel).name}")
+        lay = QVBoxLayout(dlg)
+        lbl = QLabel()
+        lbl.setPixmap(pm.scaled(
+            800, 560,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        ))
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(lbl)
+        info = QLabel(f"{pm.width()} × {pm.height()} px · {rel}")
+        info.setObjectName("EditStatus")
+        info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(info)
+        dlg.exec()
+
+    def _on_cell_clicked(self, row: int, col: int) -> None:
+        if col == 1:
+            self._preview_template(row)
+
+    def _on_step_ctx_menu(self, pos) -> None:
+        """步骤行右键菜单：预览 / 替换模板 / 复制 / 上移 / 下移 / 删除。"""
+        row = self.table.rowAt(pos.y())
+        if row < 0 or self._handle is None or row >= len(self._handle.data.steps):
+            return
+        menu = QMenu(self)
+        act_preview = menu.addAction("🔍 放大预览")
+        act_replace = menu.addAction("🔄 替换模板")
+        act_copy = menu.addAction("⧉ 复制步骤")
+        menu.addSeparator()
+        act_up = menu.addAction("↑ 上移")
+        act_down = menu.addAction("↓ 下移")
+        menu.addSeparator()
+        act_del = menu.addAction("✕ 删除步骤")
+        act = menu.exec(self.table.viewport().mapToGlobal(pos))
+        if act == act_preview:
+            self._preview_template(row)
+        elif act == act_replace:
+            self._replace_template(row)
+        elif act == act_copy:
+            self._copy_step(row)
+        elif act == act_up:
+            self._move_step(row, -1)
+        elif act == act_down:
+            self._move_step(row, 1)
+        elif act == act_del:
+            self._remove_step(row)
 
     # ================= 字段编辑 =================
 

@@ -20,6 +20,102 @@ from auto_assets.models import AutoProject
 
 MOUSEEVENTF_LEFTDOWN = 0x0002
 MOUSEEVENTF_LEFTUP = 0x0004
+KEYEVENTF_KEYUP = 0x0002
+KEYEVENTF_UNICODE = 0x0004
+INPUT_KEYBOARD = 1
+
+# 虚拟键码表：脚本 auto.key()/auto.hotkey() 支持的按键名
+_KEY_NAMES = {
+    "esc": 0x1B, "escape": 0x1B, "tab": 0x09, "enter": 0x0D, "return": 0x0D,
+    "space": 0x20, "backspace": 0x08, "delete": 0x2E, "del": 0x2E,
+    "insert": 0x2D, "home": 0x24, "end": 0x23, "pageup": 0x21, "pagedown": 0x22,
+    "up": 0x26, "down": 0x28, "left": 0x25, "right": 0x27,
+    "ctrl": 0x11, "alt": 0x12, "shift": 0x10, "win": 0x5B,
+    "capslock": 0x14, "printscreen": 0x2C,
+}
+KEY_MAP = {
+    **_KEY_NAMES,
+    **{chr(c): c for c in range(ord("A"), ord("Z") + 1)},
+    **{str(d): ord(str(d)) for d in range(10)},
+    **{f"f{i}": 0x6F + i for i in range(1, 13)},  # F1=0x70 … F12=0x7B
+}
+
+
+def _vk(name: str) -> int:
+    """按键名 → Windows 虚拟键码。单字符一律按字母/符号处理。"""
+    k = str(name).strip().lower()
+    if k in KEY_MAP:
+        return KEY_MAP[k]
+    if len(k) == 1:
+        return ord(k.upper())
+    raise ValueError(f"未知按键: {name}")
+
+
+def press_key(key: str) -> None:
+    """单击一个键（keybd_event，物理键码，仅 Windows）。"""
+    vk = _vk(key)
+    user32 = ctypes.windll.user32
+    user32.keybd_event(vk, 0, 0, 0)
+    time.sleep(0.02)
+    user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+    time.sleep(0.05)
+
+
+def press_hotkey(*keys: str) -> None:
+    """组合键：按住所有键 → 逆序松开，如 press_hotkey("ctrl", "s")。"""
+    user32 = ctypes.windll.user32
+    vks = [_vk(k) for k in keys]
+    if not vks:
+        return
+    for vk in vks:
+        user32.keybd_event(vk, 0, 0, 0)
+        time.sleep(0.02)
+    for vk in reversed(vks):
+        user32.keybd_event(vk, 0, KEYEVENTF_KEYUP, 0)
+        time.sleep(0.02)
+    time.sleep(0.05)
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", ctypes.c_ushort),
+        ("wScan", ctypes.c_ushort),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.c_size_t),
+    ]
+
+
+class _INPUT(ctypes.Structure):
+    class _U(ctypes.Union):
+        _fields_ = [("ki", _KEYBDINPUT), ("pad", ctypes.c_ubyte * 40)]
+
+    _anonymous_ = ("u",)
+    _fields_ = [("type", ctypes.c_ulong), ("u", _U)]
+
+
+def _send_unicode_scan(scan: int, up: bool) -> None:
+    """SendInput 注入一个 UTF-16 码元（KEYEVENTF_UNICODE，绕过输入法）。"""
+    flags = KEYEVENTF_UNICODE | (KEYEVENTF_KEYUP if up else 0)
+    ki = _KEYBDINPUT(0, scan, flags, 0, 0)
+    inp = _INPUT(INPUT_KEYBOARD)
+    inp.ki = ki
+    ctypes.windll.user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(_INPUT))
+
+
+def type_text(text: str) -> None:
+    """注入文本（支持中文）：按 UTF-16 码元逐个 SendInput，不走输入法。"""
+    data = text.encode("utf-16-le")
+    for i in range(0, len(data), 2):
+        scan = data[i] | (data[i + 1] << 8)
+        _send_unicode_scan(scan, up=False)
+        _send_unicode_scan(scan, up=True)
+        time.sleep(0.01)
+    time.sleep(0.05)
+
+
+class ScriptAbort(Exception):
+    """脚本调用 auto.abort() 主动终止流程（视为正常结束，非出错）。"""
 
 
 def grab_screen() -> tuple[np.ndarray, tuple[int, int]] | None:
@@ -82,16 +178,39 @@ class TaskWorker(QThread):
 
     updated = Signal()          # 状态/详情变化（UI 轮询读取属性）
 
-    def __init__(self, path: Path, data: AutoProject, grab_fn=None, click_fn=None):
+    def __init__(self, path: Path, data: AutoProject, grab_fn=None, click_fn=None,
+                 key_fn=None, hotkey_fn=None, text_fn=None):
         super().__init__()
         self.path = Path(path)
         self.data = data
         self.status = "排队中"
         self.detail = ""
         self.last_score: float | None = None
+        self.round_current = 0  # 当前轮次（loop 项目，UI 进度条读取）
+        self.round_total = data.times if data.type == "loop" else 0  # 0 = 非循环
+        self.started_at: float | None = None  # time.monotonic() 启动时刻
+        self.finished_at: float | None = None  # 结束时刻（运行中为 None）
         self._stop = False
         self._grab = grab_fn or grab_screen
         self._click = click_fn or click_at
+        self._key = key_fn or press_key
+        self._hotkey = hotkey_fn or press_hotkey
+        self._text = text_fn or type_text
+        # 脚本模式：构造 auto 桥接对象（局部导入避免循环依赖）
+        self.api = None
+        if data.script:
+            from auto_assets.services.scripting import ScriptAPI
+
+            self.api = ScriptAPI(
+                self.path,
+                grab=self._grab, click=self._click,
+                key=self._key, hotkey=self._hotkey, text=self._text,
+                log=self._script_log, stop_flag=lambda: self._stop,
+            )
+
+    def _script_log(self, msg: str) -> None:
+        self.detail = msg
+        self.updated.emit()
 
     # ---- 控制 ----
 
@@ -103,14 +222,19 @@ class TaskWorker(QThread):
     def run(self) -> None:  # noqa: C901
         try:
             self.status = "运行中"
+            self.started_at = time.monotonic()
             self._run_steps()
             if self._stop:
                 self.status = "已停止"
             else:
                 self.status = "已完成"
+        except ScriptAbort as e:  # 脚本主动终止 → 正常完成
+            self.status = "已完成"
+            self.detail = f"脚本主动终止: {e}" if str(e) else "脚本主动终止"
         except Exception as e:  # noqa: BLE001
             self.status = "出错"
             self.detail = str(e)
+        self.finished_at = time.monotonic()
         self.updated.emit()
 
     def _run_steps(self) -> None:
@@ -119,15 +243,26 @@ class TaskWorker(QThread):
         rnd = 0
         while rnd < total_rounds and not self._stop:
             rnd += 1
+            self.round_current = rnd  # 供 UI 进度条轮询
             round_txt = f"第 {rnd}/{total_rounds} 轮" if d.type == "loop" else "单次执行"
-            for i, step in enumerate(d.steps):
-                if self._stop:
-                    return
-                if not self._exec_step(step, i, round_txt, len(d.steps)):
-                    if step.strategy == "exit":
-                        self.detail = f"{round_txt} · 步骤 {i + 1} 匹配失败，触发 exit 终止"
+            if self.api is not None:
+                # ---- 脚本模式：忽略 steps，每轮调用一次 main(auto) ----
+                self.api.round = rnd
+                self.detail = round_txt
+                self.updated.emit()
+                from auto_assets.services.scripting import run_script  # 局部导入避免循环依赖
+
+                run_script(self.path, d.script, self.api)
+            else:
+                # ---- 步骤模式 ----
+                for i, step in enumerate(d.steps):
+                    if self._stop:
                         return
-                    return  # stop
+                    if not self._exec_step(step, i, round_txt, len(d.steps)):
+                        if step.strategy == "exit":
+                            self.detail = f"{round_txt} · 步骤 {i + 1} 匹配失败，触发 exit 终止"
+                            return
+                        return  # stop
             if d.type == "loop" and not self._stop:
                 self.detail = f"第 {rnd}/{total_rounds} 轮完成"
                 self.updated.emit()

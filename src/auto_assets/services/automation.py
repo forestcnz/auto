@@ -14,6 +14,8 @@ from auto_assets.models import AutoProject
 from auto_assets.paths import DEFAULT_AUTO_ROOT
 from auto_assets.services.storage import _unique_file, sanitize
 
+SCRIPTS_DIR = "scripts"  # 项目内脚本目录名（rel 形如 scripts/main.py）
+
 
 @dataclass
 class AutoProjectHandle:
@@ -119,3 +121,50 @@ class AutomationService:
         target = _unique_file(tdir, Path(source_png).name)
         shutil.copy2(source_png, target)
         return f"templates/{target.name}".replace("\\", "/")
+
+    # ---------- 脚本（Python 脚本模式） ----------
+
+    def _scripts_dir(self, auto_dir: Path) -> Path:
+        return Path(auto_dir) / SCRIPTS_DIR
+
+    def _resolve_script(self, auto_dir: Path, rel: str) -> Path:
+        """解析脚本相对路径，拒绝越出 scripts/ 目录（防路径穿越）。"""
+        root = Path(auto_dir).resolve()
+        p = (root / rel).resolve()
+        if p.parent != (root / SCRIPTS_DIR).resolve() or p.suffix != ".py":
+            raise ValueError(f"非法脚本路径: {rel}")
+        return p
+
+    def list_scripts(self, auto_dir: Path) -> list[str]:
+        """列出项目内脚本，返回相对路径列表（scripts/xx.py，按名称排序）。"""
+        d = self._scripts_dir(auto_dir)
+        if not d.exists():
+            return []
+        return sorted(
+            f"{SCRIPTS_DIR}/{f.name}".replace("\\", "/") for f in d.glob("*.py")
+        )
+
+    def create_script(self, auto_dir: Path, name: str) -> str:
+        """新建脚本（写入骨架代码），返回相对路径；重名自动追加 _1。"""
+        from auto_assets.services.scripting import SCRIPT_TEMPLATE
+
+        d = self._scripts_dir(auto_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        stem = sanitize(name.strip().removesuffix(".py")) or "script"
+        target = _unique_file(d, f"{stem}.py")
+        target.write_text(SCRIPT_TEMPLATE, "utf-8")
+        return f"{SCRIPTS_DIR}/{target.name}".replace("\\", "/")
+
+    def read_script(self, auto_dir: Path, rel: str) -> str:
+        return self._resolve_script(auto_dir, rel).read_text("utf-8")
+
+    def save_script(self, auto_dir: Path, rel: str, content: str) -> None:
+        self._resolve_script(auto_dir, rel).write_text(content, "utf-8")
+
+    def delete_script(self, auto_dir: Path, rel: str) -> None:
+        """删除脚本文件；scripts/ 目录空了就一并移除。"""
+        p = self._resolve_script(auto_dir, rel)
+        p.unlink(missing_ok=True)
+        d = self._scripts_dir(auto_dir)
+        if d.exists() and not any(d.iterdir()):
+            d.rmdir()

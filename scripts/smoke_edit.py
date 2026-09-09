@@ -19,7 +19,7 @@ auto = AutomationService(cfg_svc, root=str(tmp))
 h = auto.create_project("自动签到", "loop", 50)
 print("1. create ->", (h.path / "project.json").exists(), (h.path / "templates").exists())
 data = json.loads((h.path / "project.json").read_text("utf-8"))
-assert set(data.keys()) == {"name", "type", "times", "steps"}, data.keys()
+assert set(data.keys()) == {"name", "type", "times", "steps", "script"}, data.keys()
 print("   schema keys:", list(data.keys()), "| type:", data["type"], "| times:", data["times"])
 
 # 2. 列表
